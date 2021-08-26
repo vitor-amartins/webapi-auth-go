@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/golang-jwt/jwt"
 	"log"
 	"math"
 	"math/big"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/golang-jwt/jwt"
 )
 
 type Jwks struct {
@@ -126,20 +127,20 @@ func GetClaimsFromIdToken(tokenStr *string) (*ClaimsIdToken, error) {
 			groups = append(groups, fmt.Sprint(v))
 		}
 		c := ClaimsIdToken{
-			Sub: claims["sub"].(string),
-			Aud: claims["aud"].(string),
+			Sub:           claims["sub"].(string),
+			Aud:           claims["aud"].(string),
 			EmailVerified: claims["email_verified"].(bool),
-			TokenUse: claims["token_use"].(string),
-			AuthTime: time.Unix(int64(authSec), int64(authDec*(1e9))),
-			Iss: claims["iss"].(string),
-			Username: claims["cognito:username"].(string),
-			Exp: time.Unix(int64(expSec), int64(expDec*(1e9))),
-			GivenName: claims["given_name"].(string),
-			FamilyName: claims["family_name"].(string),
-			Iat: time.Unix(int64(iatSec), int64(iatDec*(1e9))),
-			Email: claims["email"].(string),
-			Groups: groups,
-			EventId: claims["event_id"].(string),
+			TokenUse:      claims["token_use"].(string),
+			AuthTime:      time.Unix(int64(authSec), int64(authDec*(1e9))),
+			Iss:           claims["iss"].(string),
+			Username:      claims["cognito:username"].(string),
+			Exp:           time.Unix(int64(expSec), int64(expDec*(1e9))),
+			GivenName:     claims["given_name"].(string),
+			FamilyName:    claims["family_name"].(string),
+			Iat:           time.Unix(int64(iatSec), int64(iatDec*(1e9))),
+			Email:         claims["email"].(string),
+			Groups:        groups,
+			EventId:       claims["event_id"].(string),
 		}
 		return &c, nil
 	}
