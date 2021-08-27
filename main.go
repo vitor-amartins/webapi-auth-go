@@ -24,11 +24,10 @@ func main() {
 			return utils.GetClaimsFromIdToken(&auth)
 		},
 	}
-	e.Use(middleware.JWTWithConfig(config))
 
 	e.GET("/", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, c.Get("claims"))
-	})
+	}, middleware.JWTWithConfig(config), utils.AllowRolesBuilder([]string{"general"}))
 
 	e.Logger.Fatal(e.Start(":8080"))
 }

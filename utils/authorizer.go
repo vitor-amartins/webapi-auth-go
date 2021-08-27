@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt"
+	"github.com/labstack/echo/v4"
 )
 
 type Jwks struct {
@@ -145,4 +146,33 @@ func GetClaimsFromIdToken(tokenStr *string) (*ClaimsIdToken, error) {
 		return &c, nil
 	}
 	return nil, errors.New("F")
+}
+
+func hasIntersection(s1, s2 []string) bool {
+	hash := make(map[string]bool)
+	for _, e := range s1 {
+		hash[e] = true
+	}
+	for _, e := range s2 {
+		if hash[e] {
+			return true
+		}
+	}
+	return false
+}
+
+func AllowRolesBuilder(ar []string) func(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			cl := c.Get("claims").(*ClaimsIdToken)
+			if hasIntersection(ar, cl.Groups) {
+				return next(c)
+			}
+			b := map[string]string{
+				"message": "Forbidden",
+				"code":    "ERR.1.0020",
+			}
+			return c.JSON(http.StatusForbidden, b)
+		}
+	}
 }
