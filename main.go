@@ -23,6 +23,12 @@ func main() {
 		ParseTokenFunc: func(auth string, c echo.Context) (interface{}, error) {
 			return utils.GetClaimsFromIdToken(&auth)
 		},
+		ErrorHandler: func(e error) error {
+			if e == middleware.ErrJWTMissing || e == middleware.ErrJWTInvalid {
+				return utils.RespondWithError(utils.GetMappedError(utils.AuthUnauthorized))
+			}
+			return utils.RespondWithError(e)
+		},
 	}
 
 	e.GET("/", func(c echo.Context) error {

@@ -68,7 +68,7 @@ func getPublicKey(token *jwt.Token, jwks Jwks) (*rsa.PublicKey, error) {
 			return pk, nil
 		}
 	}
-	return pk, errors.New("invalid kid")
+	return pk, GetMappedError(AuthUnauthorized)
 }
 
 func validationGetter(token *jwt.Token) (interface{}, error) {
@@ -81,33 +81,33 @@ func validationGetter(token *jwt.Token) (interface{}, error) {
 
 	resp, err := http.Get(publicKeysURL)
 	if err != nil {
-		return token, err
+		return token, GetMappedError(AuthUnauthorized)
 	}
 
 	defer resp.Body.Close()
 
 	var jwks = Jwks{}
 	if err = json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
-		return token, err
+		return token, GetMappedError(AuthUnauthorized)
 	}
 	checkIss := token.Claims.(jwt.MapClaims).VerifyIssuer(issuer, false)
 	if !checkIss {
-		return token, errors.New("invalid iss")
+		return token, GetMappedError(AuthUnauthorized)
 	}
 
 	aud, _ := token.Claims.(jwt.MapClaims)["aud"].(string)
 	if aud != clientId {
-		return token, errors.New("invalid audience")
+		return token, GetMappedError(AuthUnauthorized)
 	}
 
 	err = token.Claims.(jwt.MapClaims).Valid()
 	if err != nil {
-		return token, errors.New("token expired")
+		return token, errors.New(AuthTokenExpired)
 	}
 
 	pk, err := getPublicKey(token, jwks)
 	if err != nil {
-		return nil, errors.New("F")
+		return nil, GetMappedError(AuthUnauthorized)
 	}
 	return pk, nil
 }
@@ -115,11 +115,15 @@ func validationGetter(token *jwt.Token) (interface{}, error) {
 func GetClaimsFromIdToken(tokenStr *string) (*ClaimsIdToken, error) {
 	token, err := jwt.Parse(*tokenStr, validationGetter)
 	if err != nil {
-		return nil, err
+		return nil, GetMappedError(AuthUnauthorized)
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
 		// There's probably a better way of doing this
+		tokenUse := claims["token_use"].(string)
+		if tokenUse != "id" {
+			return nil, GetMappedError(AuthUnauthorized)
+		}
 		authSec, authDec := math.Modf(claims["auth_time"].(float64))
 		expSec, expDec := math.Modf(claims["exp"].(float64))
 		iatSec, iatDec := math.Modf(claims["iat"].(float64))
@@ -145,7 +149,7 @@ func GetClaimsFromIdToken(tokenStr *string) (*ClaimsIdToken, error) {
 		}
 		return &c, nil
 	}
-	return nil, errors.New("F")
+	return nil, GetMappedError(AuthUnauthorized)
 }
 
 func hasIntersection(s1, s2 []string) bool {
@@ -168,11 +172,7 @@ func AllowRolesBuilder(ar []string) func(next echo.HandlerFunc) echo.HandlerFunc
 			if hasIntersection(ar, cl.Groups) {
 				return next(c)
 			}
-			b := map[string]string{
-				"message": "Forbidden",
-				"code":    "ERR.1.0020",
-			}
-			return c.JSON(http.StatusForbidden, b)
+			return RespondWithError(GetMappedError(AuthForbidden))
 		}
 	}
 }
