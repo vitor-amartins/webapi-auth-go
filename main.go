@@ -2,13 +2,18 @@ package main
 
 import (
 	"log"
-	"net/http"
 	"os"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/cognitoidentityprovider"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/vitor-amartins/webapi-auth-go/api"
+	"github.com/vitor-amartins/webapi-auth-go/routes"
+	"github.com/vitor-amartins/webapi-auth-go/services"
 	"github.com/vitor-amartins/webapi-auth-go/utils"
 )
 
@@ -19,13 +24,19 @@ func main() {
 	}
 
 	clientId := os.Getenv("COGNITO_CLIENT_ID")
-	region := os.Getenv("COGNITO_REGION")
+	clientSecret := os.Getenv("COGNITO_CLIENT_SECRET")
+	region := os.Getenv("AWS_DEFAULT_REGION")
 	userPoolId := os.Getenv("COGNITO_USER_POOL_ID")
 	allowedOrigins := strings.Split(os.Getenv("ALLOW_ORIGINS"), ",")
 
 	ij, err := utils.GetIssuerAndJwks(region, userPoolId)
 	if err != nil {
 		log.Panic("Unable to get issuer and jwks")
+	}
+
+	sess, err := session.NewSession(&aws.Config{Region: aws.String(region)})
+	if err != nil {
+		log.Panic("Unable to get aws session")
 	}
 
 	e := echo.New()
@@ -46,30 +57,29 @@ func main() {
 		},
 	}
 
-	allowAdminRoles := utils.AllowRolesBuilder(*utils.NewSet("admin"))
-	allowMentorRoles := utils.AllowRolesBuilder(*utils.NewSet("mentor"))
-	allowGeneralRoles := utils.AllowRolesBuilder(*utils.NewSet("general"))
-	allowBIRoles := utils.AllowRolesBuilder(*utils.NewSet("bi", "admin"))
+	a := api.Api{
+		Middlewares: api.Middlewares{
+			AllowGeneralRoles: utils.AllowRolesBuilder(*utils.NewSet("general")),
+			AllowAdminRoles:   utils.AllowRolesBuilder(*utils.NewSet("admin")),
+			AllowMentorRoles:  utils.AllowRolesBuilder(*utils.NewSet("mentor")),
+			AllowBIRoles:      utils.AllowRolesBuilder(*utils.NewSet("bi", "admin")),
+		},
+		Services: api.Services{
+			AuthService: services.AuthService{
+				Client:       cognitoidentityprovider.New(sess),
+				UserPoolId:   userPoolId,
+				ClientId:     clientId,
+				ClientSecret: clientSecret,
+			},
+		},
+	}
 
 	v1Routes := e.Group("/v1")
+
 	authRoutes := v1Routes.Group("")
 	authRoutes.Use(middleware.JWTWithConfig(config))
 
-	authRoutes.GET("/general", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, c.Get("claims"))
-	}, allowGeneralRoles)
-
-	authRoutes.GET("/admin", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, c.Get("claims"))
-	}, allowAdminRoles)
-
-	authRoutes.GET("/mentor", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, c.Get("claims"))
-	}, allowMentorRoles)
-
-	authRoutes.GET("/bi", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, c.Get("claims"))
-	}, allowBIRoles)
+	routes.MakeUserRoutes(&a, authRoutes.Group(routes.UserPrefix))
 
 	e.Logger.Fatal(e.Start(":8080"))
 }
