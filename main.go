@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
@@ -16,9 +17,11 @@ func main() {
 	if err != nil {
 		log.Panic("Error loading environmental variables from .env")
 	}
+
 	clientId := os.Getenv("COGNITO_CLIENT_ID")
 	region := os.Getenv("COGNITO_REGION")
 	userPoolId := os.Getenv("COGNITO_USER_POOL_ID")
+	allowedOrigins := strings.Split(os.Getenv("ALLOW_ORIGINS"), ",")
 
 	ij, err := utils.GetIssuerAndJwks(region, userPoolId)
 	if err != nil {
@@ -26,6 +29,9 @@ func main() {
 	}
 
 	e := echo.New()
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: allowedOrigins,
+	}))
 
 	config := middleware.JWTConfig{
 		ContextKey: "claims",
@@ -45,10 +51,11 @@ func main() {
 	allowGeneralRoles := utils.AllowRolesBuilder(*utils.NewSet("general"))
 	allowBIRoles := utils.AllowRolesBuilder(*utils.NewSet("bi", "admin"))
 
-	authRoutes := e.Group("")
+	v1Routes := e.Group("/v1")
+	authRoutes := v1Routes.Group("")
 	authRoutes.Use(middleware.JWTWithConfig(config))
 
-	authRoutes.GET("/", func(c echo.Context) error {
+	authRoutes.GET("/general", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, c.Get("claims"))
 	}, allowGeneralRoles)
 
