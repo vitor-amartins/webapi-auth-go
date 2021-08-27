@@ -4,13 +4,11 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"math"
 	"math/big"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt"
@@ -19,6 +17,11 @@ import (
 
 type Jwks struct {
 	Keys []JSONWebKeys `json:"keys"`
+}
+
+type IssuerAndJwks struct {
+	Jwks   Jwks
+	Issuer string
 }
 
 type JSONWebKeys struct {
@@ -71,49 +74,51 @@ func getPublicKey(token *jwt.Token, jwks Jwks) (*rsa.PublicKey, error) {
 	return pk, GetMappedError(AuthUnauthorized)
 }
 
-func validationGetter(token *jwt.Token) (interface{}, error) {
-	clientId := os.Getenv("COGNITO_CLIENT_ID")
-	region := os.Getenv("COGNITO_REGION")
-	userPoolId := os.Getenv("COGNITO_USER_POOL_ID")
-
+func GetIssuerAndJwks(region string, userPoolId string) (IssuerAndJwks, error) {
+	var jwks = Jwks{}
 	issuer := fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", region, userPoolId)
 	publicKeysURL := fmt.Sprintf("%s/.well-known/jwks.json", issuer)
 
 	resp, err := http.Get(publicKeysURL)
 	if err != nil {
-		return token, GetMappedError(AuthUnauthorized)
+		return IssuerAndJwks{Jwks: jwks, Issuer: issuer}, err
 	}
 
 	defer resp.Body.Close()
 
-	var jwks = Jwks{}
 	if err = json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
-		return token, GetMappedError(AuthUnauthorized)
+		return IssuerAndJwks{Jwks: jwks, Issuer: issuer}, err
 	}
-	checkIss := token.Claims.(jwt.MapClaims).VerifyIssuer(issuer, false)
-	if !checkIss {
-		return token, GetMappedError(AuthUnauthorized)
-	}
-
-	aud, _ := token.Claims.(jwt.MapClaims)["aud"].(string)
-	if aud != clientId {
-		return token, GetMappedError(AuthUnauthorized)
-	}
-
-	err = token.Claims.(jwt.MapClaims).Valid()
-	if err != nil {
-		return token, errors.New(AuthTokenExpired)
-	}
-
-	pk, err := getPublicKey(token, jwks)
-	if err != nil {
-		return nil, GetMappedError(AuthUnauthorized)
-	}
-	return pk, nil
+	return IssuerAndJwks{Jwks: jwks, Issuer: issuer}, nil
 }
 
-func GetClaimsFromIdToken(tokenStr *string) (*ClaimsIdToken, error) {
-	token, err := jwt.Parse(*tokenStr, validationGetter)
+func validationGetterBuilder(clientId string, ij IssuerAndJwks) func(token *jwt.Token) (interface{}, error) {
+	return func(token *jwt.Token) (interface{}, error) {
+		checkIss := token.Claims.(jwt.MapClaims).VerifyIssuer(ij.Issuer, false)
+		if !checkIss {
+			return token, GetMappedError(AuthUnauthorized)
+		}
+
+		aud, _ := token.Claims.(jwt.MapClaims)["aud"].(string)
+		if aud != clientId {
+			return token, GetMappedError(AuthUnauthorized)
+		}
+
+		err := token.Claims.(jwt.MapClaims).Valid()
+		if err != nil {
+			return token, GetMappedError(AuthTokenExpired)
+		}
+
+		pk, err := getPublicKey(token, ij.Jwks)
+		if err != nil {
+			return nil, GetMappedError(AuthUnauthorized)
+		}
+		return pk, nil
+	}
+}
+
+func GetClaimsFromIdToken(tokenStr *string, clientId string, ij IssuerAndJwks) (*ClaimsIdToken, error) {
+	token, err := jwt.Parse(*tokenStr, validationGetterBuilder(clientId, ij))
 	if err != nil {
 		return nil, GetMappedError(AuthUnauthorized)
 	}
@@ -152,24 +157,11 @@ func GetClaimsFromIdToken(tokenStr *string) (*ClaimsIdToken, error) {
 	return nil, GetMappedError(AuthUnauthorized)
 }
 
-func hasIntersection(s1, s2 []string) bool {
-	hash := make(map[string]bool)
-	for _, e := range s1 {
-		hash[e] = true
-	}
-	for _, e := range s2 {
-		if hash[e] {
-			return true
-		}
-	}
-	return false
-}
-
-func AllowRolesBuilder(ar []string) func(next echo.HandlerFunc) echo.HandlerFunc {
+func AllowRolesBuilder(ar Set) func(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			cl := c.Get("claims").(*ClaimsIdToken)
-			if hasIntersection(ar, cl.Groups) {
+			if ar.HasIntersection(cl.Groups) {
 				return next(c)
 			}
 			return RespondWithError(GetMappedError(AuthForbidden))
